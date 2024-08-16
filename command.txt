@@ -1,0 +1,1 @@
+run.py --rank 2 --eval_interval 50 --exp_dir output/exp_2-4-8
