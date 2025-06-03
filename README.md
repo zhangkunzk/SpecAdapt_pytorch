@@ -4,4 +4,4 @@ This is the official implementation for the paper "Low-Rank Spectral Adapter for
 
 The main framework of the proposed method can be illustrated as follows:
 
-![overall-framework](img\model.jpg)
+![overall-framework](img/model.jpg)
