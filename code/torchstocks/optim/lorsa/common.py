@@ -49,12 +49,6 @@ def get_slice_by_rank(r, full_rank):
     raise ValueError(f'Invalid rank value {r}.')
 
 
-class FlatIdentity(object):
-
-    def __call__(self, x, inverse=False):
-        return x
-
-
 class FlatKeepLastDim(object):
 
     def __init__(self, shape):
@@ -79,7 +73,7 @@ class FlatLikeSquare(object):
         shape = tuple(int(s) for s in shape)
         self.source_shape = shape
 
-        if (not ignore_2d) or len(shape) != 2:
+        if (not ignore_2d) or len(shape) > 2:
             size = int(np.prod(shape))
             factor = int(np.sqrt(size))
             while size % factor != 0:
@@ -150,13 +144,13 @@ class FlatKeepLongerSide(object):
 
 class AbstractDecomposition(object):
 
-    def __init__(self, original_p, flatten):
+    def __init__(self, original_p, r, flatten):
         self.original_p = original_p
+        self.r = r
         self.flat = flatten
 
         self.params = []
         self.p = self.flat(original_p)
-        self.training = True
 
     def init(self):
         self._decompose()
@@ -170,12 +164,12 @@ class AbstractDecomposition(object):
     def _compose(self):
         pass
 
-    def pre_step(self):
+    def propagate_grad(self):
         with torch.no_grad():
             flat_g = self.flat(self.original_p.grad)
             self.p.backward(flat_g)
 
-    def post_step(self):
+    def update(self):
         p = self._compose()
         if p is None:
             p = self.p
@@ -188,13 +182,6 @@ class AbstractDecomposition(object):
                 self.original_p.grad = None
             else:
                 self.original_p.zero_()
-
-    def train(self, training=True):
-        self.training = training
-        self.post_step()
-
-    def eval(self):
-        self.train(False)
 
 
 def grad_norm_(p, dim, eps=1e-8):

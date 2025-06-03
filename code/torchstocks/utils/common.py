@@ -25,19 +25,14 @@ __all__ = [
 def fix_random_seed(seed: int = 0):
     """Fix random seed
     """
-    os.environ['PYTHONHASHSEED'] = str(seed)
     random.seed(seed)
     np.random.seed(seed)
-    torch.manual_seed(seed)
     torch.random.manual_seed(seed)
     torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.benchmark = False
-    torch.backends.cudnn.deterministic = True
 
 
 def replace_module(model: nn.Module, name: str, new_module: nn.Module):
-    """Replace module
+    """Repalce module
     """
     sub_names = name.split('.')
     module = model
@@ -99,7 +94,7 @@ class Experiment(object):
             raise RuntimeError(f'{experiment_dir} already exists.')
 
         os.makedirs(experiment_dir, exist_ok=True)
-        self._backup_project(project_dir, os.path.join(experiment_dir, 'src'))
+        self.backup_project(project_dir, os.path.join(experiment_dir, 'src'))
         self.log('command.txt', ' '.join(map(shlex.quote, sys.argv)))
 
     def log(self, filename, content, end='\n'):
@@ -107,9 +102,9 @@ class Experiment(object):
             f.write(content)
             f.write(end)
 
-    def _backup_project(self, src, dst):
-        excludes = self._get_excludes(dst)
-        dir_list, file_list = self._get_creation_list(root=src, excludes=excludes)
+    def backup_project(self, src, dst):
+        excludes = self.get_excludes(dst)
+        dir_list, file_list = self.get_creation_list(root=src, excludes=excludes)
         os.makedirs(dst, exist_ok=True)
         for path in dir_list:
             os.mkdir(os.path.join(dst, os.path.relpath(path, src)))
@@ -122,7 +117,7 @@ class Experiment(object):
             shutil.copy(path, target_path)
 
     @staticmethod
-    def _get_creation_list(root=None, dir_list=None, file_list=None, excludes=None):
+    def get_creation_list(root=None, dir_list=None, file_list=None, excludes=None):
         if dir_list is None:
             dir_list = []
         if file_list is None:
@@ -139,14 +134,14 @@ class Experiment(object):
 
             if os.path.isdir(path):
                 dir_list.append(path)
-                Experiment._get_creation_list(path, dir_list, file_list, excludes)
+                Experiment.get_creation_list(path, dir_list, file_list, excludes)
             if os.path.isfile(path):
                 file_list.append(path)
 
         return dir_list, file_list
 
     @staticmethod
-    def _get_excludes(path):
+    def get_excludes(path):
         path = os.path.abspath(path)
         excludes = []
         while path and path != '/':

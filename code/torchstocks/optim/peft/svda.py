@@ -7,8 +7,7 @@ import torch
 from torch.nn import functional as F
 from torch.nn import init
 
-from .common import is_target_group, FlatLikeSquare, AbstractDecomposition, FlatIdentity, layer_grad_norm_, \
-    rms_grad_norm_
+from .common import is_target_group, FlatLikeSquare, AbstractDecomposition, grad_norm_, FlatIdentity
 from ..adamw import AdamW
 
 __all__ = [
@@ -33,17 +32,15 @@ class WrapperNd(AbstractDecomposition):
             self,
             p,
             rank,
-            max_rank: int,  # 768, 1024
-            extra_decay: float,  # 1.0, 1.5
-            grad_norm: Optional[str],  # 'rms', 'layer', None
-            weight_dropout: float = 0.1,
+            max_rank=512,
+            extra_decay=0.2,
+            weight_dropout=0.1,
             sh=None
     ) -> None:
         super().__init__(p, FlatLikeSquare(p.shape))
         self.rank = rank
         self.max_rank = max_rank
         self.extra_decay = extra_decay
-        self.grad_norm = grad_norm
         self.weight_dropout = weight_dropout
         self.sh = sh
 
@@ -91,19 +88,15 @@ class WrapperNd(AbstractDecomposition):
     def pre_step(self):
         super().pre_step()
         with torch.no_grad():
-            if self.grad_norm == 'layer' or self.grad_norm == 'layer_norm':
-                layer_grad_norm_(self.a, 0)
-                layer_grad_norm_(self.b, 1)
-            elif self.grad_norm == 'rms' or self.grad_norm == 'rms_norm':
-                rms_grad_norm_(self.a, 0)
-                rms_grad_norm_(self.b, 1)
+            grad_norm_(self.a, 0)
+            grad_norm_(self.b, 1)
 
             singular_decay = 1 - self.s1 / self.s1.max()
             weight_decay = self.extra_decay * self.weight_decay
-            # l1_decay_(self.a, self.lr * weight_decay * singular_decay[:, None])
-            # l1_decay_(self.b, self.lr * weight_decay * singular_decay)
-            l2_decay_(self.a, self.lr * weight_decay * singular_decay[:, None])
-            l2_decay_(self.b, self.lr * weight_decay * singular_decay)
+            l1_decay_(self.a, self.lr * weight_decay * singular_decay[:, None])
+            l1_decay_(self.b, self.lr * weight_decay * singular_decay)
+            # l2_decay_(self.a, self.lr * weight_decay * singular_decay[:, None])
+            # l2_decay_(self.b, self.lr * weight_decay * singular_decay)
 
 
 class Wrapper1d(AbstractDecomposition):
@@ -111,7 +104,7 @@ class Wrapper1d(AbstractDecomposition):
     def __init__(
             self,
             p,
-            extra_decay: float,  # 1.0, 1.5
+            extra_decay=1,
             weight_dropout=0.1
     ) -> None:
         super().__init__(p, FlatIdentity())
@@ -139,8 +132,8 @@ class Wrapper1d(AbstractDecomposition):
         super().pre_step()
         with torch.no_grad():
             weight_decay = self.extra_decay * self.weight_decay
-            # l1_decay_(self.p1, self.lr * weight_decay)
-            l2_decay_(self.p1, self.lr * weight_decay)
+            l1_decay_(self.p1, self.lr * weight_decay)
+            # l2_decay_(self.p1, self.lr * weight_decay)
 
 
 class Wrapper1dScaleShift(AbstractDecomposition):
@@ -167,10 +160,6 @@ class SAdamW(AdamW):
             self,
             params,
             r,
-            max_rank=1024,
-            extra_decay=1.3,
-            grad_norm='rms',
-            use_sh=True,
             lr=1e-3,
             betas=(0.9, 0.999),
             eps=1e-8,
@@ -198,19 +187,12 @@ class SAdamW(AdamW):
                 continue
             for p in group['params']:
                 if len(p.shape) < 2:
-                    wrappers_1d[id(p)] = Wrapper1d(p, extra_decay=extra_decay)
-                    # wrappers_1d[id(p)] = Wrapper1dScaleShift(p)
+                    wrappers_1d[id(p)] = Wrapper1d(p)
                 else:
-                    if sh is None and use_sh:
+                    if sh is None:
                         sh = torch.eye(r, dtype=p.dtype, device=p.device)
-                    wrappers_nd[id(p)] = WrapperNd(
-                        p=p,
-                        rank=r,
-                        max_rank=max_rank,
-                        extra_decay=extra_decay,
-                        grad_norm=grad_norm,
-                        sh=sh
-                    )
+                        # init.orthogonal_(sh)
+                    wrappers_nd[id(p)] = WrapperNd(p, r, sh=sh)
 
         for wrapper in wrappers_1d.values():
             wrapper.init()

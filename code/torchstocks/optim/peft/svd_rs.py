@@ -8,7 +8,7 @@ import torch
 from torch import nn
 from torch.nn import init
 
-from .common import is_target_group, FlatLikeSquare, AbstractDecomposition, layer_grad_norm_
+from .common import is_target_group, FlatLikeSquare, AbstractDecomposition, grad_norm_
 from ..adamw import AdamW
 
 
@@ -71,8 +71,8 @@ class SVDDecomposition(AbstractDecomposition):
     def pre_step(self):
         super().pre_step()
         with torch.no_grad():
-            layer_grad_norm_(self.a, 0)
-            layer_grad_norm_(self.b, 1)
+            grad_norm_(self.a, 0)
+            grad_norm_(self.b, 1)
 
 
 class RSAdamW(AdamW):

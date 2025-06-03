@@ -48,7 +48,6 @@ class TrainOptions(Options):
     rank = OptionItem(None, type=int)
     param_groups = OptionItem(None, type=eval)
     clip_grad_norm = OptionItem(None, type=float)
-    eval_interval = OptionItem(10)
 
 
 class TrainEntry(AbstractModelEntry):

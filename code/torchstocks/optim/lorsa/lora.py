@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 
+
 from typing import Optional
 
 import numpy as np
 import torch
+from torch import nn
 from torch.nn import init
-from torch.nn import functional as F
 
-from .common import is_target_group, AbstractDecomposition, FlatLikeSquare, grad_norm_, FlatIdentity
+from .common import is_target_group, AbstractDecomposition, FlatLikeSquare, grad_norm_
 from ..adamw import AdamW
 
 __all__ = [
@@ -15,31 +16,11 @@ __all__ = [
 ]
 
 
-class Decomposition1d(AbstractDecomposition):
+class Decomposition(AbstractDecomposition):
 
-    def __init__(self, p):
-        super().__init__(p, FlatIdentity())
-
-    def _decompose(self):
-        with torch.no_grad():
-            self.p0 = torch.clone(self.original_p)
-            self.scale = torch.ones((), dtype=self.p.dtype, device=self.p.device)
-            self.bias = torch.zeros((), dtype=self.p.dtype, device=self.p.device)
-
-            self.params = [self.scale, self.bias]
-
-    def _compose(self):
-        with torch.enable_grad():
-            self.p = self.p0 * self.scale + self.bias
-
-
-class DecompositionNd(AbstractDecomposition):
-
-    def __init__(self, p, r, weight_dropout=0.1, context=None):
-        super().__init__(p, FlatLikeSquare(p.shape))
-        self.r = r
-        self.wd = weight_dropout
-        self.context = context
+    def __init__(self, p, r, drop_rate=0):
+        super().__init__(p, r, FlatLikeSquare(p.shape))
+        self.dp = nn.Dropout(drop_rate) if drop_rate > 0 else nn.Identity()
 
     def _decompose(self):
         with torch.no_grad():
@@ -58,12 +39,10 @@ class DecompositionNd(AbstractDecomposition):
     def _compose(self):
         with torch.enable_grad():
             d = self.u @ self.v
-            if self.training and self.wd > 0.0:
-                d = F.dropout(d, self.wd)
-            self.p = self.p0 + d
+            self.p = self.p0 + self.dp(d)
 
-    def pre_step(self):
-        super().pre_step()
+    def propagate_grad(self):
+        super().propagate_grad()
         with torch.no_grad():
             grad_norm_(self.u, 0)
             grad_norm_(self.v, 1)
@@ -101,33 +80,21 @@ class LoRAAdamW(AdamW):
             params = group['params']
             group['params'] = []
             for p in params:
-                if len(p.shape) == 0:
+                if len(p.shape) < 2:
                     continue
-                if len(p.shape) == 1:
-                    decomposition = Decomposition1d(p)
-                else:
-                    decomposition = DecompositionNd(p, r)
+                decomposition = Decomposition(p, r)
                 self.decompositions.append(decomposition)
                 decomposition.init()
-                for _p in decomposition.params:
-                    group['params'].append(_p)
+                group['params'].extend(decomposition.params)
 
     def step(self, closure=None):
         for decomposition in self.decompositions:
-            decomposition.pre_step()
+            decomposition.propagate_grad()
         super().step(closure)
         for decomposition in self.decompositions:
-            decomposition.post_step()
+            decomposition.update()
 
     def zero_grad(self, set_to_none=False) -> None:
         for decomposition in self.decompositions:
             decomposition.zero_grads(set_to_none=set_to_none)
         super().zero_grad(set_to_none=set_to_none)
-
-    def train(self, training=True):
-        for decomposition in self.decompositions:
-            decomposition.train(training)
-
-    def eval(self):
-        for decomposition in self.decompositions:
-            decomposition.eval()

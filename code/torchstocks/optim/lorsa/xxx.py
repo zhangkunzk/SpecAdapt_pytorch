@@ -41,13 +41,12 @@ def create_dct_matrix(n, normalize=True, dtype=None, device=None):
 
 class Decomposition(AbstractDecomposition):
 
-    def __init__(self, original_p: torch.Tensor, r, mh, mw, weight_dropout=0):
-        super().__init__(original_p, FlatLikeSquare(original_p.shape))
-        self.r = r
+    def __init__(self, original_p: torch.Tensor, r, mh, mw, drop_rate=0):
+        super().__init__(original_p, r, FlatLikeSquare(original_p.shape))
         self.h, self.w = self.flat.target_shape[-2:]
         self.mh = mh
         self.mw = mw
-        self.wd = nn.Dropout(weight_dropout) if weight_dropout > 0 else nn.Identity()
+        self.dp = nn.Dropout(drop_rate) if drop_rate > 0 else nn.Identity()
 
     def _decompose(self):
         with torch.no_grad():
@@ -55,12 +54,8 @@ class Decomposition(AbstractDecomposition):
             if isinstance(self.r, float):
                 rh = int(self.h * self.r)
                 rw = int(self.w * self.r)
-            # R = 512
-            # spect_candidates = torch.linspace(1, self.mh.shape[0] - 1, R, dtype=torch.long, device=self.p.device)
-            # idx_h = spect_candidates[torch.randperm(R, device=self.p.device)[:rh]]
-            # idx_w = spect_candidates[torch.randperm(R, device=self.p.device)[:rw]]
-            idx_h = torch.randperm(self.mh.shape[0], device=self.p.device)[:rh]
-            idx_w = torch.randperm(self.mw.shape[0], device=self.p.device)[:rw]
+            idx_h = torch.randperm(self.h)[:rh].to(self.p.device)
+            idx_w = torch.randperm(self.w)[:rw].to(self.p.device)
 
             mh = self.mh[:, :self.h]
             mw = self.mw[:, :self.w]
@@ -82,10 +77,10 @@ class Decomposition(AbstractDecomposition):
         with torch.enable_grad():
             mh = self.mh[self.idx_h, :self.h]
             mw = self.mw[self.idx_w, :self.w]
-            self.p = self.p0 + self.wd(mh.T @ self.freq @ mw)
+            self.p = self.p0 + self.dp(mh.T @ self.freq @ mw)
 
-    def pre_step(self):
-        super().pre_step()
+    def propagate_grad(self):
+        super().propagate_grad()
         with torch.no_grad():
             grad_norm_(self.freq, (0, 1))
 
@@ -138,7 +133,7 @@ class XAdamW(AdamW):
             # mh.requires_grad = True
             # mw.requires_grad = True
             m = create_dct_matrix(max(max_h, max_w), dtype=dtype, device=device)
-            # m.requires_grad = True
+            m.requires_grad = True
 
             self.decompositions = []
             for group in self.param_groups:
@@ -154,14 +149,14 @@ class XAdamW(AdamW):
                     decomposition.init()
                     group['params'].extend(decomposition.params)
 
-            # self.param_groups[-1]['params'] += [m]
+            self.param_groups[-1]['params'] += [m]
 
     def step(self, closure=None):
         for decomposition in self.decompositions:
-            decomposition.pre_step()
+            decomposition.propagate_grad()
         super().step(closure)
         for decomposition in self.decompositions:
-            decomposition.post_step()
+            decomposition.update()
 
     def zero_grad(self, set_to_none=False) -> None:
         for decomposition in self.decompositions:
